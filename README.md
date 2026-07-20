@@ -4,6 +4,8 @@ A single-page tool for figuring out when you were at a specific point during a r
 
 Runs entirely in your browser. No account, no install, no data leaves your machine except requests for map tiles.
 
+Link to app: https://mclairewrazej-goatgirl.github.io/Trail-Time/ 
+
 ## Using it
 
 1. Open `index.html` in any modern browser (Chrome, Firefox, Safari, Edge).
