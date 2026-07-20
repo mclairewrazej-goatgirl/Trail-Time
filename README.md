@@ -1,6 +1,6 @@
 # Trail·Time — GPX Timestamp Viewer
 
-A single-page tool for figuring out when you were at a specific point on a hike, using the timestamps embedded in a GPX track (e.g. exported from Strava).
+A single-page tool for figuring out when you were at a specific point during a recorded activity, using the timestamps embedded in a GPX track (e.g. exported from Strava).
 
 Runs entirely in your browser. No account, no install, no data leaves your machine except requests for map tiles.
 
