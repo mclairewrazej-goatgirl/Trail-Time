@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trail·Time — GPX Timestamp Viewer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root {
+    --paper: #f6f2ea;
+    --ink: #2b2620;
+    --moss: #4a5d3a;
+    --moss-dark: #38472c;
+    --clay: #a9532f;
+    --line: #ddd2bd;
+    --paper-raised: #efe9db;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  .mono {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+  }
+
+  header {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      var(--paper-raised) 0px,
+      var(--paper-raised) 1px,
+      var(--paper) 1px,
+      var(--paper) 23px
+    );
+    border-bottom: 2px solid var(--moss-dark);
+    padding: 10px 20px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 24px;
+  }
+
+  header h1 {
+    margin: 0;
+    font-size: 1.3rem;
+    letter-spacing: 0.02em;
+    color: var(--moss-dark);
+  }
+
+  header h1 .dot {
+    color: var(--clay);
+  }
+
+  header .tagline {
+    font-size: 0.78rem;
+    color: #6b6252;
+    margin-top: 2px;
+  }
+
+  #summary-bar {
+    display: none;
+    font-size: 0.78rem;
+    gap: 4px 18px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  #summary-bar.visible {
+    display: flex;
+  }
+
+  #summary-bar .stat {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.2;
+  }
+
+  #summary-bar .stat .label {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #8a8069;
+  }
+
+  #summary-bar .stat .value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  #main {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+
+  #sidebar {
+    width: 320px;
+    flex-shrink: 0;
+    background: var(--paper);
+    border-right: 2px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  #sidebar-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    min-height: 0;
+  }
+
+  #map {
+    flex: 1;
+    min-width: 0;
+    background: #dcd6c6;
+  }
+
+  /* Drop zone */
+  #dropzone {
+    border: 2px dashed #b8ac8f;
+    border-radius: 8px;
+    padding: 24px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    background: var(--paper-raised);
+  }
+
+  #dropzone:hover, #dropzone.dragover {
+    border-color: var(--moss);
+    background: #e7e0cc;
+  }
+
+  #dropzone .icon {
+    font-size: 1.8rem;
+    margin-bottom: 6px;
+  }
+
+  #dropzone .primary {
+    font-weight: 600;
+    color: var(--moss-dark);
+    font-size: 0.92rem;
+  }
+
+  #dropzone .secondary {
+    font-size: 0.75rem;
+    color: #7a7160;
+    margin-top: 4px;
+  }
+
+  #file-input {
+    display: none;
+  }
+
+  #error-msg {
+    display: none;
+    background: #f4dcd0;
+    border: 1px solid var(--clay);
+    color: #7a3416;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    margin-top: 10px;
+  }
+
+  /* Section headers */
+  .section-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #8a8069;
+    margin: 18px 0 8px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 4px;
+  }
+
+  .section-label:first-child {
+    margin-top: 0;
+  }
+
+  /* Summary stats (in sidebar, mirrors top bar on narrow layouts) */
+  #track-summary {
+    display: none;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    font-size: 0.8rem;
+  }
+
+  #track-summary.visible {
+    display: grid;
+  }
+
+  #track-summary .stat .label {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    color: #8a8069;
+    letter-spacing: 0.05em;
+  }
+
+  #track-summary .stat .value {
+    font-weight: 600;
+  }
+
+  #track-summary .stat.full {
+    grid-column: 1 / -1;
+    word-break: break-word;
+  }
+
+  /* Point detail panel */
+  #point-panel {
+    display: none;
+  }
+
+  #point-panel.visible {
+    display: block;
+  }
+
+  #point-panel .empty-hint {
+    font-size: 0.82rem;
+    color: #8a8069;
+    font-style: italic;
+  }
+
+  .time-display {
+    font-size: 1.9rem;
+    font-weight: 700;
+    color: var(--moss-dark);
+    line-height: 1.1;
+    margin-bottom: 2px;
+  }
+
+  .date-display {
+    font-size: 0.85rem;
+    color: #6b6252;
+    margin-bottom: 4px;
+  }
+
+  .no-time {
+    font-size: 1.05rem;
+    color: var(--clay);
+    font-style: italic;
+    margin-bottom: 4px;
+  }
+
+  .point-index {
+    font-size: 0.72rem;
+    color: #8a8069;
+    margin-bottom: 14px;
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 14px;
+    font-size: 0.82rem;
+  }
+
+  .detail-grid .item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .detail-grid .item.wide {
+    grid-column: 1 / -1;
+  }
+
+  .detail-grid .label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #8a8069;
+  }
+
+  .detail-grid .value {
+    font-weight: 600;
+  }
+
+  .detail-grid .value.elapsed {
+    color: var(--clay);
+  }
+
+  /* Scrubber, pinned at bottom */
+  #scrubber-wrap {
+    display: none;
+    flex-shrink: 0;
+    padding: 12px 16px 16px;
+    border-top: 2px solid var(--line);
+    background: var(--paper-raised);
+  }
+
+  #scrubber-wrap.visible {
+    display: block;
+  }
+
+  #scrubber-wrap .scrub-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #8a8069;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--moss);
+    cursor: pointer;
+  }
+
+  /* Leaflet marker tweaks */
+  .trail-marker {
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+  }
+
+  .marker-start {
+    background: var(--moss);
+    width: 14px;
+    height: 14px;
+  }
+
+  .marker-end {
+    background: var(--clay);
+    width: 14px;
+    height: 14px;
+  }
+
+  .marker-selected {
+    background: #d9a441;
+    width: 16px;
+    height: 16px;
+    border: 3px solid #fff;
+  }
+
+  @media (max-width: 720px) {
+    #main {
+      flex-direction: column;
+    }
+    #sidebar {
+      width: 100%;
+      border-right: none;
+      border-bottom: 2px solid var(--line);
+      max-height: 55vh;
+    }
+    #map {
+      flex: 1;
+      min-height: 240px;
+    }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <h1>Trail<span class="dot">·</span>Time</h1>
+      <div class="tagline">GPX timestamp viewer — click a point on the trail to see when you were there</div>
+    </div>
+    <div id="summary-bar">
+      <div class="stat"><span class="label">File</span><span class="value mono" id="sum-filename">—</span></div>
+      <div class="stat"><span class="label">Points</span><span class="value mono" id="sum-points">—</span></div>
+      <div class="stat"><span class="label">Distance</span><span class="value mono" id="sum-distance">—</span></div>
+      <div class="stat"><span class="label">Gain</span><span class="value mono" id="sum-gain">—</span></div>
+      <div class="stat"><span class="label">Duration</span><span class="value mono" id="sum-duration">—</span></div>
+      <div class="stat"><span class="label">Start</span><span class="value mono" id="sum-start">—</span></div>
+      <div class="stat"><span class="label">End</span><span class="value mono" id="sum-end">—</span></div>
+    </div>
+  </header>
+
+  <div id="main">
+    <div id="sidebar">
+      <div id="sidebar-scroll">
+        <div id="dropzone">
+          <div class="icon">🥾</div>
+          <div class="primary">Drop a .gpx file here</div>
+          <div class="secondary">or click to browse</div>
+          <input type="file" id="file-input" accept=".gpx" />
+        </div>
+        <div id="error-msg"></div>
+
+        <div id="track-summary-section" style="display:none;">
+          <div class="section-label">Track Summary</div>
+          <div id="track-summary">
+            <div class="stat full"><span class="label">File</span><span class="value mono" id="ts-filename">—</span></div>
+            <div class="stat"><span class="label">Points</span><span class="value mono" id="ts-points">—</span></div>
+            <div class="stat"><span class="label">Distance</span><span class="value mono" id="ts-distance">—</span></div>
+            <div class="stat"><span class="label">Elev. Gain</span><span class="value mono" id="ts-gain">—</span></div>
+            <div class="stat"><span class="label">Duration</span><span class="value mono" id="ts-duration">—</span></div>
+            <div class="stat full"><span class="label">Start</span><span class="value mono" id="ts-start">—</span></div>
+            <div class="stat full"><span class="label">End</span><span class="value mono" id="ts-end">—</span></div>
+          </div>
+        </div>
+
+        <div id="point-panel">
+          <div class="section-label">Selected Point</div>
+          <div id="point-time-block"></div>
+          <div class="point-index mono" id="point-index">—</div>
+          <div class="detail-grid">
+            <div class="item">
+              <span class="label">Latitude</span>
+              <span class="value mono" id="pt-lat">—</span>
+            </div>
+            <div class="item">
+              <span class="label">Longitude</span>
+              <span class="value mono" id="pt-lon">—</span>
+            </div>
+            <div class="item" id="pt-ele-item">
+              <span class="label">Elevation</span>
+              <span class="value mono" id="pt-ele">—</span>
+            </div>
+            <div class="item">
+              <span class="label">Distance so far</span>
+              <span class="value mono" id="pt-dist">—</span>
+            </div>
+            <div class="item wide">
+              <span class="label">Climbed so far</span>
+              <span class="value mono" id="pt-climb">—</span>
+            </div>
+            <div class="item wide">
+              <span class="label">Elapsed since start</span>
+              <span class="value mono elapsed" id="pt-elapsed">—</span>
+            </div>
+          </div>
+        </div>
+        <div id="point-panel-empty" style="display:none;">
+          <div class="section-label">Selected Point</div>
+          <div class="empty-hint">Click the trail on the map, or drag the scrubber below, to inspect a point.</div>
+        </div>
+      </div>
+
+      <div id="scrubber-wrap">
+        <div class="scrub-label">
+          <span>Scrub track</span>
+          <span class="mono" id="scrub-position">0 / 0</span>
+        </div>
+        <input type="range" id="scrubber" min="0" max="0" value="0" step="1" />
+      </div>
+    </div>
+
+    <div id="map"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------- State ----------
+  var map = null;
+  var trackPolyline = null;
+  var startMarker = null;
+  var endMarker = null;
+  var selectedMarker = null;
+
+  var points = [];      // { lat, lon, ele, time (Date|null) }
+  var cumDist = [];      // cumulative distance in meters, indexed with points
+  var cumGain = [];      // cumulative elevation gain in meters, indexed with points
+  var firstTimedIndex = -1; // index of first point with a valid time
+
+  // ---------- Map init ----------
+  function initMap() {
+    map = L.map('map', { zoomControl: true }).setView([46.8, -121.7], 10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+  }
+
+  // ---------- Haversine ----------
+  function haversine(lat1, lon1, lat2, lon2) {
+    var R = 6371000; // meters
+    var toRad = Math.PI / 180;
+    var dLat = (lat2 - lat1) * toRad;
+    var dLon = (lon2 - lon1) * toRad;
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  // ---------- GPX parsing ----------
+  function parseGpx(text) {
+    var xml = new DOMParser().parseFromString(text, 'application/xml');
+    var parseError = xml.querySelector('parsererror');
+    if (parseError) {
+      throw new Error('Could not parse this file as XML/GPX.');
+    }
+
+    var nodes = xml.getElementsByTagName('trkpt');
+    if (!nodes || nodes.length === 0) {
+      nodes = xml.getElementsByTagName('rtept');
+    }
+    if (!nodes || nodes.length === 0) {
+      throw new Error('No <trkpt> or <rtept> points found in this GPX file.');
+    }
+
+    var pts = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var latAttr = node.getAttribute('lat');
+      var lonAttr = node.getAttribute('lon');
+      if (latAttr === null || lonAttr === null) continue;
+      var lat = parseFloat(latAttr);
+      var lon = parseFloat(lonAttr);
+      if (isNaN(lat) || isNaN(lon)) continue;
+
+      var eleNode = node.getElementsByTagName('ele')[0];
+      var ele = null;
+      if (eleNode && eleNode.textContent.trim() !== '') {
+        var eleVal = parseFloat(eleNode.textContent.trim());
+        if (!isNaN(eleVal)) ele = eleVal;
+      }
+
+      var timeNode = node.getElementsByTagName('time')[0];
+      var time = null;
+      if (timeNode && timeNode.textContent.trim() !== '') {
+        var d = new Date(timeNode.textContent.trim());
+        if (!isNaN(d.getTime())) time = d;
+      }
+
+      pts.push({ lat: lat, lon: lon, ele: ele, time: time });
+    }
+
+    if (pts.length === 0) {
+      throw new Error('Found track points, but none had valid lat/lon coordinates.');
+    }
+
+    return pts;
+  }
+
+  // ---------- Derived arrays ----------
+  function computeDerived(pts) {
+    var dist = new Array(pts.length);
+    var gain = new Array(pts.length);
+    dist[0] = 0;
+    gain[0] = 0;
+    for (var i = 1; i < pts.length; i++) {
+      var d = haversine(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon);
+      dist[i] = dist[i - 1] + d;
+
+      var g = 0;
+      if (pts[i - 1].ele !== null && pts[i].ele !== null) {
+        var delta = pts[i].ele - pts[i - 1].ele;
+        if (delta > 0) g = delta;
+      }
+      gain[i] = gain[i - 1] + g;
+    }
+    return { dist: dist, gain: gain };
+  }
+
+  function findFirstTimedIndex(pts) {
+    for (var i = 0; i < pts.length; i++) {
+      if (pts[i].time) return i;
+    }
+    return -1;
+  }
+
+  // ---------- Formatting helpers ----------
+  function fmtDistance(meters) {
+    var km = meters / 1000;
+    var mi = meters / 1609.344;
+    return km.toFixed(2) + ' km (' + mi.toFixed(2) + ' mi)';
+  }
+
+  function fmtElevation(meters) {
+    var ft = meters * 3.28084;
+    return meters.toFixed(0) + ' m (' + ft.toFixed(0) + ' ft)';
+  }
+
+  function fmtDuration(ms) {
+    if (ms < 0) ms = 0;
+    var totalSeconds = Math.floor(ms / 1000);
+    var h = Math.floor(totalSeconds / 3600);
+    var m = Math.floor((totalSeconds % 3600) / 60);
+    var s = totalSeconds % 60;
+    var parts = [];
+    parts.push(String(h).padStart(2, '0'));
+    parts.push(String(m).padStart(2, '0'));
+    parts.push(String(s).padStart(2, '0'));
+    return parts.join(':');
+  }
+
+  function fmtTime(date) {
+    if (!date) return null;
+    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function fmtFullDate(date) {
+    if (!date) return null;
+    return date.toLocaleDateString(undefined, {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    });
+  }
+
+  function fmtTimestamp(date) {
+    if (!date) return '—';
+    return date.toLocaleString(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+  }
+
+  // ---------- Rendering track on map ----------
+  function renderTrack(pts) {
+    if (trackPolyline) { map.removeLayer(trackPolyline); trackPolyline = null; }
+    if (startMarker) { map.removeLayer(startMarker); startMarker = null; }
+    if (endMarker) { map.removeLayer(endMarker); endMarker = null; }
+    if (selectedMarker) { map.removeLayer(selectedMarker); selectedMarker = null; }
+
+    var latlngs = pts.map(function (p) { return [p.lat, p.lon]; });
+
+    trackPolyline = L.polyline(latlngs, {
+      color: '#4a5d3a',
+      weight: 4,
+      opacity: 0.85
+    }).addTo(map);
+
+    trackPolyline.on('click', onPolylineClick);
+
+    var startIcon = L.divIcon({ className: 'trail-marker marker-start', iconSize: [14, 14] });
+    var endIcon = L.divIcon({ className: 'trail-marker marker-end', iconSize: [14, 14] });
+
+    startMarker = L.marker(latlngs[0], { icon: startIcon, title: 'Start' }).addTo(map);
+    endMarker = L.marker(latlngs[latlngs.length - 1], { icon: endIcon, title: 'End' }).addTo(map);
+
+    map.fitBounds(trackPolyline.getBounds(), { padding: [30, 30] });
+  }
+
+  function onPolylineClick(e) {
+    var idx = findNearestPointIndex(e.latlng.lat, e.latlng.lng);
+    selectPoint(idx);
+  }
+
+  function findNearestPointIndex(lat, lon) {
+    var bestIdx = 0;
+    var bestDist = Infinity;
+    for (var i = 0; i < points.length; i++) {
+      var d = haversine(lat, lon, points[i].lat, points[i].lon);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }
+
+  // ---------- Selecting a point ----------
+  function selectPoint(idx) {
+    if (idx < 0 || idx >= points.length) return;
+    var p = points[idx];
+
+    // Update marker
+    if (selectedMarker) { map.removeLayer(selectedMarker); }
+    var icon = L.divIcon({ className: 'trail-marker marker-selected', iconSize: [16, 16] });
+    selectedMarker = L.marker([p.lat, p.lon], { icon: icon, zIndexOffset: 1000 }).addTo(map);
+
+    // Update sidebar
+    renderPointDetail(idx);
+
+    // Sync scrubber
+    var scrubber = document.getElementById('scrubber');
+    scrubber.value = idx;
+    document.getElementById('scrub-position').textContent = (idx + 1) + ' / ' + points.length;
+  }
+
+  function renderPointDetail(idx) {
+    var p = points[idx];
+
+    document.getElementById('point-panel').classList.add('visible');
+    document.getElementById('point-panel-empty').style.display = 'none';
+
+    var timeBlock = document.getElementById('point-time-block');
+    if (p.time) {
+      timeBlock.innerHTML =
+        '<div class="time-display mono">' + fmtTime(p.time) + '</div>' +
+        '<div class="date-display">' + fmtFullDate(p.time) + '</div>';
+    } else {
+      timeBlock.innerHTML = '<div class="no-time">No timestamp recorded for this point</div>';
+    }
+
+    document.getElementById('point-index').textContent = '#' + (idx + 1) + ' of ' + points.length;
+    document.getElementById('pt-lat').textContent = p.lat.toFixed(6);
+    document.getElementById('pt-lon').textContent = p.lon.toFixed(6);
+
+    var eleItem = document.getElementById('pt-ele-item');
+    if (p.ele !== null) {
+      eleItem.style.display = '';
+      document.getElementById('pt-ele').textContent = fmtElevation(p.ele);
+    } else {
+      eleItem.style.display = 'none';
+    }
+
+    document.getElementById('pt-dist').textContent = fmtDistance(cumDist[idx]);
+    document.getElementById('pt-climb').textContent = fmtElevation(cumGain[idx]);
+
+    var elapsedEl = document.getElementById('pt-elapsed');
+    if (firstTimedIndex === -1 || !p.time) {
+      elapsedEl.textContent = p.time ? '— (no earlier timestamp)' : '—';
+    } else {
+      var elapsedMs = p.time.getTime() - points[firstTimedIndex].time.getTime();
+      elapsedEl.textContent = fmtDuration(elapsedMs);
+    }
+  }
+
+  // ---------- Summary panel ----------
+  function renderSummary(filename, pts) {
+    var totalDist = cumDist[cumDist.length - 1];
+    var totalGain = cumGain[cumGain.length - 1];
+
+    var startTime = firstTimedIndex !== -1 ? points[firstTimedIndex].time : null;
+    var endTime = null;
+    for (var i = points.length - 1; i >= 0; i--) {
+      if (points[i].time) { endTime = points[i].time; break; }
+    }
+
+    var durationStr = '—';
+    if (startTime && endTime) {
+      durationStr = fmtDuration(endTime.getTime() - startTime.getTime());
+    }
+
+    var distStr = fmtDistance(totalDist);
+    var gainStr = fmtElevation(totalGain);
+    var startStr = fmtTimestamp(startTime);
+    var endStr = fmtTimestamp(endTime);
+    var pointsStr = String(pts.length);
+
+    // Top bar
+    document.getElementById('sum-filename').textContent = filename;
+    document.getElementById('sum-points').textContent = pointsStr;
+    document.getElementById('sum-distance').textContent = distStr;
+    document.getElementById('sum-gain').textContent = gainStr;
+    document.getElementById('sum-duration').textContent = durationStr;
+    document.getElementById('sum-start').textContent = startStr;
+    document.getElementById('sum-end').textContent = endStr;
+    document.getElementById('summary-bar').classList.add('visible');
+
+    // Sidebar mirror
+    document.getElementById('ts-filename').textContent = filename;
+    document.getElementById('ts-points').textContent = pointsStr;
+    document.getElementById('ts-distance').textContent = distStr;
+    document.getElementById('ts-gain').textContent = gainStr;
+    document.getElementById('ts-duration').textContent = durationStr;
+    document.getElementById('ts-start').textContent = startStr;
+    document.getElementById('ts-end').textContent = endStr;
+    document.getElementById('track-summary-section').style.display = '';
+    document.getElementById('track-summary').classList.add('visible');
+  }
+
+  // ---------- Scrubber ----------
+  function setupScrubber() {
+    var scrubber = document.getElementById('scrubber');
+    scrubber.addEventListener('input', function () {
+      var idx = parseInt(scrubber.value, 10);
+      selectPointFromScrubber(idx);
+    });
+  }
+
+  function selectPointFromScrubber(idx) {
+    if (idx < 0 || idx >= points.length) return;
+    var p = points[idx];
+
+    if (selectedMarker) { map.removeLayer(selectedMarker); }
+    var icon = L.divIcon({ className: 'trail-marker marker-selected', iconSize: [16, 16] });
+    selectedMarker = L.marker([p.lat, p.lon], { icon: icon, zIndexOffset: 1000 }).addTo(map);
+
+    renderPointDetail(idx);
+    document.getElementById('scrub-position').textContent = (idx + 1) + ' / ' + points.length;
+  }
+
+  // ---------- Error handling ----------
+  function showError(msg) {
+    var el = document.getElementById('error-msg');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function clearError() {
+    var el = document.getElementById('error-msg');
+    el.style.display = 'none';
+    el.textContent = '';
+  }
+
+  // ---------- File loading ----------
+  function loadFile(file) {
+    if (!file) return;
+    clearError();
+
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        var text = e.target.result;
+        var pts = parseGpx(text);
+
+        points = pts;
+        var derived = computeDerived(points);
+        cumDist = derived.dist;
+        cumGain = derived.gain;
+        firstTimedIndex = findFirstTimedIndex(points);
+
+        renderTrack(points);
+        renderSummary(file.name, points);
+
+        var scrubber = document.getElementById('scrubber');
+        scrubber.min = 0;
+        scrubber.max = points.length - 1;
+        scrubber.value = 0;
+        document.getElementById('scrub-position').textContent = '1 / ' + points.length;
+        document.getElementById('scrubber-wrap').classList.add('visible');
+
+        document.getElementById('point-panel').classList.remove('visible');
+        document.getElementById('point-panel-empty').style.display = 'block';
+
+        selectPoint(0);
+      } catch (err) {
+        showError(err.message || 'Failed to parse this GPX file.');
+      }
+    };
+    reader.onerror = function () {
+      showError('Could not read this file.');
+    };
+    reader.readAsText(file);
+  }
+
+  // ---------- Drop zone wiring ----------
+  function setupDropzone() {
+    var dz = document.getElementById('dropzone');
+    var input = document.getElementById('file-input');
+
+    dz.addEventListener('click', function () { input.click(); });
+
+    input.addEventListener('change', function () {
+      if (input.files && input.files[0]) loadFile(input.files[0]);
+    });
+
+    ['dragenter', 'dragover'].forEach(function (evt) {
+      dz.addEventListener(evt, function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dz.classList.add('dragover');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(function (evt) {
+      dz.addEventListener(evt, function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dz.classList.remove('dragover');
+      });
+    });
+
+    dz.addEventListener('drop', function (e) {
+      var files = e.dataTransfer.files;
+      if (files && files[0]) loadFile(files[0]);
+    });
+  }
+
+  // ---------- Init ----------
+  document.addEventListener('DOMContentLoaded', function () {
+    initMap();
+    setupDropzone();
+    setupScrubber();
+  });
+})();
+</script>
+</body>
+</html>
