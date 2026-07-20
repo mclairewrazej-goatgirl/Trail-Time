@@ -74,6 +74,44 @@
     margin-top: 2px;
   }
 
+  #pref-controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .toggle-group {
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .toggle-btn {
+    font-family: inherit;
+    font-size: 0.72rem;
+    padding: 5px 10px;
+    border: none;
+    background: var(--paper-raised);
+    color: #6b6252;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .toggle-btn + .toggle-btn {
+    border-left: 1px solid var(--line);
+  }
+
+  .toggle-btn.active {
+    background: var(--moss);
+    color: #fff;
+  }
+
+  .toggle-btn:hover:not(.active) {
+    background: #e7e0cc;
+  }
+
   #summary-bar {
     display: none;
     font-size: 0.78rem;
@@ -378,6 +416,16 @@
       <h1>Trail<span class="dot">·</span>Time</h1>
       <div class="tagline">GPX timestamp viewer — click a point on the trail to see when you were there</div>
     </div>
+    <div id="pref-controls">
+      <div class="toggle-group" role="group" aria-label="Units">
+        <button type="button" class="toggle-btn" data-unit="metric">km · m</button>
+        <button type="button" class="toggle-btn" data-unit="imperial">mi · ft</button>
+      </div>
+      <div class="toggle-group" role="group" aria-label="Coordinate format">
+        <button type="button" class="toggle-btn" data-coord="latlon">Lat / Long</button>
+        <button type="button" class="toggle-btn" data-coord="utm">UTM</button>
+      </div>
+    </div>
     <div id="summary-bar">
       <div class="stat"><span class="label">File</span><span class="value mono" id="sum-filename">—</span></div>
       <div class="stat"><span class="label">Points</span><span class="value mono" id="sum-points">—</span></div>
@@ -419,12 +467,16 @@
           <div class="point-index mono" id="point-index">—</div>
           <div class="detail-grid">
             <div class="item">
-              <span class="label">Latitude</span>
-              <span class="value mono" id="pt-lat">—</span>
+              <span class="label" id="pt-coord1-label">Latitude</span>
+              <span class="value mono" id="pt-coord1">—</span>
             </div>
             <div class="item">
-              <span class="label">Longitude</span>
-              <span class="value mono" id="pt-lon">—</span>
+              <span class="label" id="pt-coord2-label">Longitude</span>
+              <span class="value mono" id="pt-coord2">—</span>
+            </div>
+            <div class="item wide" id="pt-utm-zone-item" style="display:none;">
+              <span class="label">UTM Zone</span>
+              <span class="value mono" id="pt-utm-zone">—</span>
             </div>
             <div class="item" id="pt-ele-item">
               <span class="label">Elevation</span>
@@ -479,6 +531,25 @@
   var cumDist = [];      // cumulative distance in meters, indexed with points
   var cumGain = [];      // cumulative elevation gain in meters, indexed with points
   var firstTimedIndex = -1; // index of first point with a valid time
+  var currentFilename = null;
+  var selectedIndex = -1;
+
+  // ---------- Display preferences ----------
+  function getPref(key, fallback) {
+    try {
+      var v = localStorage.getItem(key);
+      return v === null ? fallback : v;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function setPref(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) { /* ignore */ }
+  }
+
+  var unitSystem = getPref('trailtime-units', 'metric');       // 'metric' | 'imperial'
+  var coordFormat = getPref('trailtime-coordFormat', 'latlon'); // 'latlon' | 'utm'
 
   // ---------- Map init ----------
   function initMap() {
@@ -581,14 +652,94 @@
 
   // ---------- Formatting helpers ----------
   function fmtDistance(meters) {
-    var km = meters / 1000;
-    var mi = meters / 1609.344;
-    return km.toFixed(2) + ' km (' + mi.toFixed(2) + ' mi)';
+    if (unitSystem === 'imperial') {
+      return (meters / 1609.344).toFixed(2) + ' mi';
+    }
+    return (meters / 1000).toFixed(2) + ' km';
   }
 
   function fmtElevation(meters) {
-    var ft = meters * 3.28084;
-    return meters.toFixed(0) + ' m (' + ft.toFixed(0) + ' ft)';
+    if (unitSystem === 'imperial') {
+      return (meters * 3.28084).toFixed(0) + ' ft';
+    }
+    return meters.toFixed(0) + ' m';
+  }
+
+  // ---------- UTM conversion (WGS84) ----------
+  function utmLetterDesignator(lat) {
+    if (lat <= 84 && lat >= 72) return 'X';
+    if (lat < 72 && lat >= 64) return 'W';
+    if (lat < 64 && lat >= 56) return 'V';
+    if (lat < 56 && lat >= 48) return 'U';
+    if (lat < 48 && lat >= 40) return 'T';
+    if (lat < 40 && lat >= 32) return 'S';
+    if (lat < 32 && lat >= 24) return 'R';
+    if (lat < 24 && lat >= 16) return 'Q';
+    if (lat < 16 && lat >= 8) return 'P';
+    if (lat < 8 && lat >= 0) return 'N';
+    if (lat < 0 && lat >= -8) return 'M';
+    if (lat < -8 && lat >= -16) return 'L';
+    if (lat < -16 && lat >= -24) return 'K';
+    if (lat < -24 && lat >= -32) return 'J';
+    if (lat < -32 && lat >= -40) return 'H';
+    if (lat < -40 && lat >= -48) return 'G';
+    if (lat < -48 && lat >= -56) return 'F';
+    if (lat < -56 && lat >= -64) return 'E';
+    if (lat < -64 && lat >= -72) return 'D';
+    if (lat < -72 && lat >= -80) return 'C';
+    return 'Z';
+  }
+
+  function toUTM(lat, lon) {
+    var a = 6378137.0; // WGS84 semi-major axis
+    var eccSquared = 0.00669438;
+    var k0 = 0.9996;
+
+    var latRad = lat * Math.PI / 180.0;
+    var lonRad = lon * Math.PI / 180.0;
+
+    var zoneNumber = Math.floor((lon + 180) / 6) + 1;
+
+    // Norway exception
+    if (lat >= 56.0 && lat < 64.0 && lon >= 3.0 && lon < 12.0) zoneNumber = 32;
+
+    // Svalbard exceptions
+    if (lat >= 72.0 && lat < 84.0) {
+      if (lon >= 0.0 && lon < 9.0) zoneNumber = 31;
+      else if (lon >= 9.0 && lon < 21.0) zoneNumber = 33;
+      else if (lon >= 21.0 && lon < 33.0) zoneNumber = 35;
+      else if (lon >= 33.0 && lon < 42.0) zoneNumber = 37;
+    }
+
+    var lonOrigin = (zoneNumber - 1) * 6 - 180 + 3;
+    var lonOriginRad = lonOrigin * Math.PI / 180.0;
+
+    var eccPrimeSquared = eccSquared / (1 - eccSquared);
+
+    var N = a / Math.sqrt(1 - eccSquared * Math.sin(latRad) * Math.sin(latRad));
+    var T = Math.tan(latRad) * Math.tan(latRad);
+    var C = eccPrimeSquared * Math.cos(latRad) * Math.cos(latRad);
+    var A = Math.cos(latRad) * (lonRad - lonOriginRad);
+
+    var M = a * ((1 - eccSquared / 4 - 3 * eccSquared * eccSquared / 64 - 5 * eccSquared * eccSquared * eccSquared / 256) * latRad
+      - (3 * eccSquared / 8 + 3 * eccSquared * eccSquared / 32 + 45 * eccSquared * eccSquared * eccSquared / 1024) * Math.sin(2 * latRad)
+      + (15 * eccSquared * eccSquared / 256 + 45 * eccSquared * eccSquared * eccSquared / 1024) * Math.sin(4 * latRad)
+      - (35 * eccSquared * eccSquared * eccSquared / 3072) * Math.sin(6 * latRad));
+
+    var easting = k0 * N * (A + (1 - T + C) * A * A * A / 6
+      + (5 - 18 * T + T * T + 72 * C - 58 * eccPrimeSquared) * A * A * A * A * A / 120) + 500000.0;
+
+    var northing = k0 * (M + N * Math.tan(latRad) * (A * A / 2 + (5 - T + 9 * C + 4 * C * C) * A * A * A * A / 24
+      + (61 - 58 * T + T * T + 600 * C - 330 * eccPrimeSquared) * A * A * A * A * A * A / 720));
+
+    if (lat < 0) northing += 10000000.0; // southern hemisphere offset
+
+    return {
+      zone: zoneNumber,
+      letter: utmLetterDesignator(lat),
+      easting: easting,
+      northing: northing
+    };
   }
 
   function fmtDuration(ms) {
@@ -688,6 +839,7 @@
   }
 
   function renderPointDetail(idx) {
+    selectedIndex = idx;
     var p = points[idx];
 
     document.getElementById('point-panel').classList.add('visible');
@@ -703,8 +855,23 @@
     }
 
     document.getElementById('point-index').textContent = '#' + (idx + 1) + ' of ' + points.length;
-    document.getElementById('pt-lat').textContent = p.lat.toFixed(6);
-    document.getElementById('pt-lon').textContent = p.lon.toFixed(6);
+
+    var zoneItem = document.getElementById('pt-utm-zone-item');
+    if (coordFormat === 'utm') {
+      var utm = toUTM(p.lat, p.lon);
+      document.getElementById('pt-coord1-label').textContent = 'Easting';
+      document.getElementById('pt-coord2-label').textContent = 'Northing';
+      document.getElementById('pt-coord1').textContent = Math.round(utm.easting) + ' m E';
+      document.getElementById('pt-coord2').textContent = Math.round(utm.northing) + ' m N';
+      document.getElementById('pt-utm-zone').textContent = utm.zone + utm.letter;
+      zoneItem.style.display = '';
+    } else {
+      document.getElementById('pt-coord1-label').textContent = 'Latitude';
+      document.getElementById('pt-coord2-label').textContent = 'Longitude';
+      document.getElementById('pt-coord1').textContent = p.lat.toFixed(6);
+      document.getElementById('pt-coord2').textContent = p.lon.toFixed(6);
+      zoneItem.style.display = 'none';
+    }
 
     var eleItem = document.getElementById('pt-ele-item');
     if (p.ele !== null) {
@@ -816,13 +983,14 @@
         var pts = parseGpx(text);
 
         points = pts;
+        currentFilename = file.name;
         var derived = computeDerived(points);
         cumDist = derived.dist;
         cumGain = derived.gain;
         firstTimedIndex = findFirstTimedIndex(points);
 
         renderTrack(points);
-        renderSummary(file.name, points);
+        renderSummary(currentFilename, points);
 
         var scrubber = document.getElementById('scrubber');
         scrubber.min = 0;
@@ -878,11 +1046,57 @@
     });
   }
 
+  // ---------- Preference toggles ----------
+  function setupPrefControls() {
+    var unitButtons = document.querySelectorAll('#pref-controls .toggle-btn[data-unit]');
+    var coordButtons = document.querySelectorAll('#pref-controls .toggle-btn[data-coord]');
+
+    function updateUnitButtons() {
+      unitButtons.forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-unit') === unitSystem);
+      });
+    }
+
+    function updateCoordButtons() {
+      coordButtons.forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-coord') === coordFormat);
+      });
+    }
+
+    updateUnitButtons();
+    updateCoordButtons();
+
+    unitButtons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        unitSystem = btn.getAttribute('data-unit');
+        setPref('trailtime-units', unitSystem);
+        updateUnitButtons();
+        refreshDisplays();
+      });
+    });
+
+    coordButtons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        coordFormat = btn.getAttribute('data-coord');
+        setPref('trailtime-coordFormat', coordFormat);
+        updateCoordButtons();
+        refreshDisplays();
+      });
+    });
+  }
+
+  function refreshDisplays() {
+    if (points.length === 0) return;
+    renderSummary(currentFilename, points);
+    if (selectedIndex >= 0) renderPointDetail(selectedIndex);
+  }
+
   // ---------- Init ----------
   document.addEventListener('DOMContentLoaded', function () {
     initMap();
     setupDropzone();
     setupScrubber();
+    setupPrefControls();
   });
 })();
 </script>
