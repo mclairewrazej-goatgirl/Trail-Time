@@ -623,19 +623,53 @@
     return pts;
   }
 
+  // ---------- Smoothing (approximates the noise reduction Strava applies) ----------
+  // Raw device GPS/elevation readings jitter point-to-point; summing every raw
+  // segment/delta (as before) overcounts distance and elevation gain versus
+  // Strava, which smooths the track before totaling. A centered moving average
+  // trims that jitter while leaving the true shape of the route intact.
+  var POSITION_SMOOTHING_WINDOW = 5;   // ~5 recorded points on each side of noise
+  var ELEVATION_SMOOTHING_WINDOW = 11; // elevation/barometric noise needs a wider window
+
+  function smoothSeries(values, windowSize) {
+    var n = values.length;
+    var half = Math.floor(windowSize / 2);
+    var result = new Array(n);
+    for (var i = 0; i < n; i++) {
+      if (values[i] === null) { result[i] = null; continue; }
+      var sum = 0, count = 0;
+      for (var j = Math.max(0, i - half); j <= Math.min(n - 1, i + half); j++) {
+        if (values[j] !== null) { sum += values[j]; count++; }
+      }
+      result[i] = count > 0 ? sum / count : null;
+    }
+    return result;
+  }
+
   // ---------- Derived arrays ----------
   function computeDerived(pts) {
-    var dist = new Array(pts.length);
-    var gain = new Array(pts.length);
+    var n = pts.length;
+    var lats = new Array(n), lons = new Array(n), eles = new Array(n);
+    for (var i = 0; i < n; i++) {
+      lats[i] = pts[i].lat;
+      lons[i] = pts[i].lon;
+      eles[i] = pts[i].ele;
+    }
+    var smoothLat = smoothSeries(lats, POSITION_SMOOTHING_WINDOW);
+    var smoothLon = smoothSeries(lons, POSITION_SMOOTHING_WINDOW);
+    var smoothEle = smoothSeries(eles, ELEVATION_SMOOTHING_WINDOW);
+
+    var dist = new Array(n);
+    var gain = new Array(n);
     dist[0] = 0;
     gain[0] = 0;
-    for (var i = 1; i < pts.length; i++) {
-      var d = haversine(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon);
+    for (var i = 1; i < n; i++) {
+      var d = haversine(smoothLat[i - 1], smoothLon[i - 1], smoothLat[i], smoothLon[i]);
       dist[i] = dist[i - 1] + d;
 
       var g = 0;
-      if (pts[i - 1].ele !== null && pts[i].ele !== null) {
-        var delta = pts[i].ele - pts[i - 1].ele;
+      if (smoothEle[i - 1] !== null && smoothEle[i] !== null) {
+        var delta = smoothEle[i] - smoothEle[i - 1];
         if (delta > 0) g = delta;
       }
       gain[i] = gain[i - 1] + g;

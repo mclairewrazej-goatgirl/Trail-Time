@@ -34,3 +34,4 @@ Strava → open the activity → the "···" (more options) menu → Export GPX
 
 * "Climbed so far" is total climb (sum of all uphill segments), not net elevation change — so it will keep increasing even on a rolling or out-and-back trail.
 * The map uses OpenStreetMap tiles, so an internet connection is needed to see the map background, but all GPX parsing and timestamp lookup works fully offline.
+* Distance and elevation gain are computed from a smoothed version of the recorded track (a moving average over nearby points), not a raw point-to-point sum. Raw GPS/barometric readings jitter slightly from point to point, and summing every jittery segment/delta inflates both totals well above reality — this smoothing is the same kind of noise reduction Strava and similar platforms apply, so totals should land much closer to what Strava reports for the same activity. Exact figures still won't match perfectly since the specific smoothing algorithms differ.
