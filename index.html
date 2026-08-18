@@ -414,7 +414,7 @@
   <header>
     <div>
       <h1>Trail<span class="dot">·</span>Time</h1>
-      <div class="tagline">GPX timestamp viewer — click a point on the trail to see when you were there</div>
+      <div class="tagline">GPX/FIT timestamp viewer — click a point on the trail to see when you were there</div>
     </div>
     <div id="pref-controls">
       <div class="toggle-group" role="group" aria-label="Units">
@@ -442,9 +442,9 @@
       <div id="sidebar-scroll">
         <div id="dropzone">
           <div class="icon">🥾</div>
-          <div class="primary">Drop a .gpx file here</div>
+          <div class="primary">Drop a .gpx or .fit file here</div>
           <div class="secondary">or click to browse</div>
-          <input type="file" id="file-input" accept=".gpx" />
+          <input type="file" id="file-input" accept=".gpx,.fit" />
         </div>
         <div id="error-msg"></div>
 
@@ -623,13 +623,179 @@
     return pts;
   }
 
+  // ---------- FIT parsing ----------
+  // Minimal binary parser for the Garmin FIT format, covering just what this
+  // app needs: "record" messages (global mesg 20) carrying position, altitude
+  // and timestamp. See the FIT SDK for the full message/field profile.
+  var FIT_EPOCH_OFFSET = 631065600; // seconds between 1989-12-31T00:00:00Z and the Unix epoch
+  var FIT_SEMICIRCLE_TO_DEG = 180 / 2147483648;
+
+  var FIT_BASE_TYPES = {
+    0x00: { size: 1, invalid: 0xFF, read: function (dv, off) { return dv.getUint8(off); } },
+    0x01: { size: 1, invalid: 0x7F, read: function (dv, off) { return dv.getInt8(off); } },
+    0x02: { size: 1, invalid: 0xFF, read: function (dv, off) { return dv.getUint8(off); } },
+    0x07: { size: 1, invalid: 0x00, read: function (dv, off) { return dv.getUint8(off); }, isString: true },
+    0x0A: { size: 1, invalid: 0x00, read: function (dv, off) { return dv.getUint8(off); } },
+    0x0D: { size: 1, invalid: 0xFF, read: function (dv, off) { return dv.getUint8(off); } },
+    0x83: { size: 2, invalid: 0x7FFF, read: function (dv, off, le) { return dv.getInt16(off, le); } },
+    0x84: { size: 2, invalid: 0xFFFF, read: function (dv, off, le) { return dv.getUint16(off, le); } },
+    0x85: { size: 4, invalid: 0x7FFFFFFF, read: function (dv, off, le) { return dv.getInt32(off, le); } },
+    0x86: { size: 4, invalid: 0xFFFFFFFF, read: function (dv, off, le) { return dv.getUint32(off, le); } },
+    0x88: { size: 4, invalid: 0xFFFFFFFF, read: function (dv, off, le) { return dv.getFloat32(off, le); } },
+    0x8B: { size: 2, invalid: 0xFFFF, read: function (dv, off, le) { return dv.getUint16(off, le); } },
+    0x8C: { size: 4, invalid: 0xFFFFFFFF, read: function (dv, off, le) { return dv.getUint32(off, le); } }
+  };
+
+  var FIT_RECORD_MESG_NUM = 20;
+  var FIT_FIELD_TIMESTAMP = 253;
+  var FIT_FIELD_POSITION_LAT = 0;
+  var FIT_FIELD_POSITION_LONG = 1;
+  var FIT_FIELD_ALTITUDE = 2;
+  var FIT_FIELD_ENHANCED_ALTITUDE = 78;
+
+  function parseFit(buffer) {
+    var dv = new DataView(buffer);
+    if (dv.byteLength < 12) {
+      throw new Error('This FIT file is too small to be valid.');
+    }
+
+    var headerSize = dv.getUint8(0);
+    if (headerSize < 12 || headerSize > dv.byteLength) {
+      throw new Error('Could not parse this file as FIT (bad header).');
+    }
+
+    var sig = '';
+    for (var s = 8; s < 12; s++) sig += String.fromCharCode(dv.getUint8(s));
+    if (sig !== '.FIT') {
+      throw new Error('This does not look like a FIT file (missing ".FIT" signature).');
+    }
+
+    var dataSize = dv.getUint32(4, true);
+    var end = Math.min(headerSize + dataSize, dv.byteLength);
+    var pos = headerSize;
+
+    var localDefs = {};   // localType -> { littleEndian, globalMesgNum, fields, devFields }
+    var lastTimestamp = null; // seconds since FIT epoch, for compressed timestamp headers
+    var pts = [];
+
+    function readField(field, offset, littleEndian) {
+      var base = FIT_BASE_TYPES[field.baseType];
+      if (!base || base.isString) return null;
+      var value = base.read(dv, offset, littleEndian);
+      return value === base.invalid ? null : value;
+    }
+
+    function readDataMessage(def, offset, compressedTimestamp) {
+      var isRecord = def.globalMesgNum === FIT_RECORD_MESG_NUM;
+      var lat = null, lon = null, ele = null, ts = compressedTimestamp;
+
+      for (var i = 0; i < def.fields.length; i++) {
+        var field = def.fields[i];
+        if (isRecord && offset + field.size <= dv.byteLength) {
+          if (field.defNum === FIT_FIELD_TIMESTAMP) {
+            var tsVal = readField(field, offset, def.littleEndian);
+            if (tsVal !== null) { ts = tsVal; lastTimestamp = tsVal; }
+          } else if (field.defNum === FIT_FIELD_POSITION_LAT) {
+            var latVal = readField(field, offset, def.littleEndian);
+            if (latVal !== null) lat = latVal * FIT_SEMICIRCLE_TO_DEG;
+          } else if (field.defNum === FIT_FIELD_POSITION_LONG) {
+            var lonVal = readField(field, offset, def.littleEndian);
+            if (lonVal !== null) lon = lonVal * FIT_SEMICIRCLE_TO_DEG;
+          } else if (field.defNum === FIT_FIELD_ALTITUDE || field.defNum === FIT_FIELD_ENHANCED_ALTITUDE) {
+            var eleVal = readField(field, offset, def.littleEndian);
+            if (eleVal !== null) ele = eleVal / 5 - 500;
+          }
+        }
+        offset += field.size;
+      }
+
+      for (var j = 0; j < def.devFields.length; j++) {
+        offset += def.devFields[j].size;
+      }
+
+      if (isRecord && lat !== null && lon !== null) {
+        pts.push({
+          lat: lat,
+          lon: lon,
+          ele: ele,
+          time: ts !== null ? new Date((ts + FIT_EPOCH_OFFSET) * 1000) : null
+        });
+      }
+
+      return offset;
+    }
+
+    while (pos < end) {
+      var header = dv.getUint8(pos);
+      pos += 1;
+
+      if (header & 0x80) {
+        // Compressed timestamp header
+        var ctsLocalType = (header >> 5) & 0x03;
+        var timeOffset = header & 0x1F;
+        var ctsDef = localDefs[ctsLocalType];
+        if (!ctsDef) break; // malformed/unsupported stream; stop rather than throw
+
+        if (lastTimestamp === null) lastTimestamp = 0;
+        var base32 = lastTimestamp - (lastTimestamp % 32);
+        var newTs = base32 + timeOffset;
+        if (newTs < lastTimestamp) newTs += 32;
+        lastTimestamp = newTs;
+
+        pos = readDataMessage(ctsDef, pos, lastTimestamp);
+      } else if (header & 0x40) {
+        // Definition message
+        var defLocalType = header & 0x0F;
+        var hasDevFields = !!(header & 0x20);
+
+        pos += 1; // reserved byte
+        var littleEndian = dv.getUint8(pos) === 0;
+        pos += 1;
+        var globalMesgNum = dv.getUint16(pos, littleEndian);
+        pos += 2;
+        var numFields = dv.getUint8(pos);
+        pos += 1;
+
+        var fields = [];
+        for (var f = 0; f < numFields; f++) {
+          fields.push({ defNum: dv.getUint8(pos), size: dv.getUint8(pos + 1), baseType: dv.getUint8(pos + 2) });
+          pos += 3;
+        }
+
+        var devFields = [];
+        if (hasDevFields) {
+          var numDevFields = dv.getUint8(pos);
+          pos += 1;
+          for (var df = 0; df < numDevFields; df++) {
+            devFields.push({ size: dv.getUint8(pos + 1) });
+            pos += 3;
+          }
+        }
+
+        localDefs[defLocalType] = { littleEndian: littleEndian, globalMesgNum: globalMesgNum, fields: fields, devFields: devFields };
+      } else {
+        // Data message
+        var dataLocalType = header & 0x0F;
+        var dataDef = localDefs[dataLocalType];
+        if (!dataDef) break; // malformed/unsupported stream; stop rather than throw
+        pos = readDataMessage(dataDef, pos, null);
+      }
+    }
+
+    if (pts.length === 0) {
+      throw new Error('No GPS record points found in this FIT file.');
+    }
+
+    return pts;
+  }
+
   // ---------- Smoothing (approximates the noise reduction Strava applies) ----------
   // Raw device GPS/elevation readings jitter point-to-point; summing every raw
   // segment/delta (as before) overcounts distance and elevation gain versus
   // Strava, which smooths the track before totaling. A centered moving average
   // trims that jitter while leaving the true shape of the route intact.
-  var POSITION_SMOOTHING_WINDOW = 5;   // ~5 recorded points on each side of noise
-  var ELEVATION_SMOOTHING_WINDOW = 11; // elevation/barometric noise needs a wider window
+  var POSITION_SMOOTHING_WINDOW = 9;   // recorded points on each side of noise
+  var ELEVATION_SMOOTHING_WINDOW = 17; // elevation/barometric noise needs a wider window
 
   function smoothSeries(values, windowSize) {
     var n = values.length;
@@ -1010,11 +1176,12 @@
     if (!file) return;
     clearError();
 
+    var isFit = /\.fit$/i.test(file.name);
+
     var reader = new FileReader();
     reader.onload = function (e) {
       try {
-        var text = e.target.result;
-        var pts = parseGpx(text);
+        var pts = isFit ? parseFit(e.target.result) : parseGpx(e.target.result);
 
         points = pts;
         currentFilename = file.name;
@@ -1038,13 +1205,17 @@
 
         selectPoint(0);
       } catch (err) {
-        showError(err.message || 'Failed to parse this GPX file.');
+        showError(err.message || 'Failed to parse this file.');
       }
     };
     reader.onerror = function () {
       showError('Could not read this file.');
     };
-    reader.readAsText(file);
+    if (isFit) {
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.readAsText(file);
+    }
   }
 
   // ---------- Drop zone wiring ----------

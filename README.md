@@ -1,6 +1,6 @@
-# Trail·Time — GPX Timestamp Viewer
+# Trail·Time — GPX/FIT Timestamp Viewer
 
-A single-page tool for figuring out when you were at a specific point during a recorded activity, using the timestamps embedded in a GPX track (e.g. exported from Strava).
+A single-page tool for figuring out when you were at a specific point during a recorded activity, using the timestamps embedded in a GPX or FIT track (e.g. exported from Strava, or copied straight off a Garmin device).
 
 Runs entirely in your browser. No account, no install, no data leaves your machine except requests for map tiles.
 
@@ -9,7 +9,7 @@ Link to app: https://mclairewrazej-goatgirl.github.io/Trail-Time/
 ## Using it
 
 1. Open `index.html` in any modern browser (Chrome, Firefox, Safari, Edge).
-2. Drag a `.gpx` file onto the drop zone, or click it to browse.
+2. Drag a `.gpx` or `.fit` file onto the drop zone, or click it to browse.
 3. Your track appears on the map, with:
    * a green dot at the start
    * an orange dot at the end
@@ -20,11 +20,17 @@ Link to app: https://mclairewrazej-goatgirl.github.io/Trail-Time/
    * elapsed time since the start
 5. Or drag the scrubber at the bottom of the sidebar to move through the track point-by-point instead of clicking.
 
-## Requirements for your GPX file
+## Requirements for your file
 
+**GPX:**
 * Must contain `<trkpt>` elements with `lat`/`lon` attributes (standard for any GPS-recorded track, including Strava exports).
 * Timestamps require a `<time>` tag on each point. Most devices/apps record this on every point, but some only log it periodically — if a point shows "no timestamp," that's a gap in the original recording, not a bug in the viewer.
 * Elevation figures require an `<ele>` tag; if absent, elevation fields are simply omitted.
+
+**FIT:**
+* Must contain `record` messages with position data (standard for any GPS-recorded activity, including raw files copied off a Garmin/Wahoo/etc. device).
+* Timestamp and altitude are read from the same `record` messages when present; a point without one simply omits that field, same as GPX.
+* Parsing happens entirely in the browser — the binary FIT format is decoded with a small built-in parser, no upload or conversion step needed.
 
 ## Getting a GPX from Strava
 
@@ -33,5 +39,5 @@ Strava → open the activity → the "···" (more options) menu → Export GPX
 ## Notes
 
 * "Climbed so far" is total climb (sum of all uphill segments), not net elevation change — so it will keep increasing even on a rolling or out-and-back trail.
-* The map uses OpenStreetMap tiles, so an internet connection is needed to see the map background, but all GPX parsing and timestamp lookup works fully offline.
+* The map uses OpenStreetMap tiles, so an internet connection is needed to see the map background, but all GPX/FIT parsing and timestamp lookup works fully offline.
 * Distance and elevation gain are computed from a smoothed version of the recorded track (a moving average over nearby points), not a raw point-to-point sum. Raw GPS/barometric readings jitter slightly from point to point, and summing every jittery segment/delta inflates both totals well above reality — this smoothing is the same kind of noise reduction Strava and similar platforms apply, so totals should land much closer to what Strava reports for the same activity. Exact figures still won't match perfectly since the specific smoothing algorithms differ.
